@@ -1,10 +1,52 @@
 ﻿#include "FileServer.h"
 #include "PathUtils.h"
 
+#include <chrono>
+#include <ctime>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <unordered_map>
 
 namespace fs = std::filesystem;
+
+namespace
+{
+    std::string GetRequestTime()
+    {
+        const auto Now =
+            std::chrono::system_clock::now();
+
+        const std::time_t Time =
+            std::chrono::system_clock::to_time_t(Now);
+
+        std::tm LocalTime{};
+
+#ifdef _WIN32
+        localtime_s(
+            &LocalTime,
+            &Time
+        );
+#else
+        localtime_r(
+            &Time,
+            &LocalTime
+        );
+#endif
+
+        std::ostringstream Stream;
+
+        Stream
+            << std::setfill('0')
+            << std::setw(2)
+            << LocalTime.tm_hour
+            << ':'
+            << std::setw(2)
+            << LocalTime.tm_min;
+
+        return Stream.str();
+    }
+}
 
 FileServer::FileServer(const ServerConfig& config)
     : Config(config)
@@ -15,10 +57,6 @@ FileServer::FileServer(const ServerConfig& config)
 
 void FileServer::RegisterRoutes()
 {
-    // ------------------------------------------------------------
-    // Health
-    // ------------------------------------------------------------
-
     Server.Get(
         "/health",
         [this](
@@ -29,12 +67,6 @@ void FileServer::RegisterRoutes()
         }
     );
 
-    // ------------------------------------------------------------
-    // CfgManifest.txt
-    //
-    // GET /manifest/cfg
-    // ------------------------------------------------------------
-
     Server.Get(
         "/manifest/cfg",
         [this](
@@ -42,18 +74,15 @@ void FileServer::RegisterRoutes()
             httplib::Response& response)
         {
             const fs::path path = Config.CfgManifest;
-
             std::error_code ec;
 
             if (!fs::is_regular_file(path, ec))
             {
                 response.status = 404;
-
                 response.set_content(
                     "CfgManifest.txt not found\n",
                     "text/plain"
                 );
-
                 return;
             }
 
@@ -63,12 +92,6 @@ void FileServer::RegisterRoutes()
             );
         }
     );
-
-    // ------------------------------------------------------------
-    // Manifest.txt
-    //
-    // GET /manifest
-    // ------------------------------------------------------------
 
     Server.Get(
         "/manifest",
@@ -77,18 +100,15 @@ void FileServer::RegisterRoutes()
             httplib::Response& response)
         {
             const fs::path path = Config.Manifest;
-
             std::error_code ec;
 
             if (!fs::is_regular_file(path, ec))
             {
                 response.status = 404;
-
                 response.set_content(
                     "Manifest.txt not found\n",
                     "text/plain"
                 );
-
                 return;
             }
 
@@ -98,14 +118,6 @@ void FileServer::RegisterRoutes()
             );
         }
     );
-
-    // ------------------------------------------------------------
-    // Files
-    //
-    // GET /file/Client.exe
-    // GET /file/Game.pak
-    // GET /file/Game/Content/foo.pak
-    // ------------------------------------------------------------
 
     Server.Get(
         R"(/file/(.+))",
@@ -116,10 +128,6 @@ void FileServer::RegisterRoutes()
             HandleFile(request, response);
         }
     );
-
-    // ------------------------------------------------------------
-    // 404
-    // ------------------------------------------------------------
 
     Server.set_error_handler(
         [](
@@ -158,15 +166,15 @@ void FileServer::HandleFile(
     const httplib::Request& request,
     httplib::Response& response)
 {
+    // Time when the file request reached the server.
+    // Format: HH:MM, for example 19:31.
+    const std::string RequestTime =
+        GetRequestTime();
+
     const std::string requestedPath =
         request.matches[1].str();
 
     fs::path filePath;
-
-    // ------------------------------------------------------------
-    // Security:
-    // requestedPath must stay inside files/
-    // ------------------------------------------------------------
 
     if (!PathUtils::ResolveSafePath(
             Root,
@@ -174,7 +182,9 @@ void FileServer::HandleFile(
             filePath))
     {
         std::cout
-            << "[FORBIDDEN] "
+            << '['
+            << RequestTime
+            << "] [FORBIDDEN] "
             << request.remote_addr
             << " -> "
             << requestedPath
@@ -189,10 +199,6 @@ void FileServer::HandleFile(
 
         return;
     }
-
-    // ------------------------------------------------------------
-    // Check file
-    // ------------------------------------------------------------
 
     std::error_code ec;
 
@@ -220,14 +226,6 @@ void FileServer::HandleFile(
         return;
     }
 
-    // ------------------------------------------------------------
-    // Send file
-    //
-    // cpp-httplib handles the file-backed response.
-    // Range requests can therefore be used by the updater
-    // for resumable downloads.
-    // ------------------------------------------------------------
-
     response.set_file_content(
         filePath.string(),
         GetContentType(filePath)
@@ -241,7 +239,9 @@ void FileServer::HandleFile(
     );
 
     std::cout
-        << "[DOWNLOAD] "
+        << '['
+        << RequestTime
+        << "] [DOWNLOAD] "
         << request.remote_addr
         << " -> "
         << requestedPath
@@ -276,10 +276,11 @@ std::string FileServer::GetContentType(
         { ".js",   "application/javascript" }
     };
 
-    std::string extension =
+    const std::string extension =
         path.extension().string();
 
-    auto it = MimeTypes.find(extension);
+    const auto it =
+        MimeTypes.find(extension);
 
     if (it != MimeTypes.end())
         return it->second;

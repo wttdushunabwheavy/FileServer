@@ -36,6 +36,7 @@ set(SOURCES
 
         src/PathUtils.cpp
         src/PathUtils.h
+        src/FileServer.cpp
 )
 
 # ============================================================
